@@ -1,6 +1,22 @@
-version: '3.9'
-
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME:-inventory}
+      POSTGRES_USER: ${DB_USER:-inventory}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-inventory}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-inventory} -d ${DB_NAME:-inventory}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -8,13 +24,24 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - SPRING_PROFILES_ACTIVE=prod
-      - SMTP_HOST=${SMTP_HOST:-smtp.example.com}
-      - SMTP_PORT=${SMTP_PORT:-587}
-      - SMTP_USERNAME=${SMTP_USERNAME:-user@example.com}
-      - SMTP_PASSWORD=${SMTP_PASSWORD:-changeme}
+      SPRING_PROFILES_ACTIVE: prod
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-inventory}
+      DB_USER: ${DB_USER:-inventory}
+      DB_PASSWORD: ${DB_PASSWORD:-inventory}
+      MAIL_HOST: ${MAIL_HOST:-smtp.example.com}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      INVMAN_LOGGING_TRACEENABLED: "true"
+      LOGGING_LEVEL_COM_INVMAN_OUTBOUND: DEBUG
+      LOGGING_LEVEL_COM_INVMAN_DATAPROCESSING_CONTROLLER: DEBUG
     volumes:
-      - sqlite-data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
@@ -32,5 +59,31 @@ services:
       - api
     restart: unless-stopped
 
+  wppconnect:
+    build:
+      context: ./wppconnect
+      dockerfile: Dockerfile
+    command: ["-c", "/usr/src/wpp-server/config.json", "-k", "${WPPCONNECT_SECRET_KEY:-THISISMYSECURETOKEN}"]
+    ports:
+      - "21465:21465"
+    volumes:
+      - ./wppconnect/config.json:/usr/src/wpp-server/config.json
+      - wppconnect-tokens:/usr/src/wpp-server/tokens
+    restart: unless-stopped
+
+  dbeaver:
+    image: dbeaver/cloudbeaver:latest
+    container_name: dbeaver
+    ports:
+      - "8978:8978"
+    volumes:
+      - dbeaver-data:/opt/cloudbeaver/workspace
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
-  sqlite-data:
+  postgres-data:
+  wppconnect-tokens:
+  dbeaver-data:

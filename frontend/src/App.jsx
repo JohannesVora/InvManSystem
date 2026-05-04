@@ -236,6 +236,8 @@ function SupplierConfigTab() {
                 recipientEmail: parsed.recipientEmail || '',
                 subjectTemplate: parsed.subjectTemplate || '',
                 bodyTemplate: parsed.bodyTemplate || '',
+                recipientPhone: parsed.recipientPhone || '',
+                messageTemplate: parsed.messageTemplate || '',
               }
             } else {
               cfgs[s.id] = {
@@ -245,6 +247,8 @@ function SupplierConfigTab() {
                 recipientEmail: '',
                 subjectTemplate: '',
                 bodyTemplate: '',
+                recipientPhone: '',
+                messageTemplate: '',
               }
             }
           } catch {
@@ -255,6 +259,8 @@ function SupplierConfigTab() {
               recipientEmail: '',
               subjectTemplate: '',
               bodyTemplate: '',
+              recipientPhone: '',
+              messageTemplate: '',
             }
           }
         }))
@@ -280,11 +286,10 @@ function SupplierConfigTab() {
     setMessages(prev => ({ ...prev, [supplierId]: null }))
     try {
       const cfg = configs[supplierId]
-      const payload = JSON.stringify({
-        recipientEmail: cfg.recipientEmail,
-        subjectTemplate: cfg.subjectTemplate,
-        bodyTemplate: cfg.bodyTemplate,
-      })
+      const payloadObj = cfg.connectorTypeName === 'WHATSAPP'
+        ? { recipientPhone: cfg.recipientPhone, messageTemplate: cfg.messageTemplate }
+        : { recipientEmail: cfg.recipientEmail, subjectTemplate: cfg.subjectTemplate, bodyTemplate: cfg.bodyTemplate }
+      const payload = JSON.stringify(payloadObj)
       await api.updateConnectorConfig(supplierId, {
         connectorTypeName: cfg.connectorTypeName,
         configPayload: payload,
@@ -320,38 +325,63 @@ function SupplierConfigTab() {
               >
                 <option value="EMAIL">EMAIL</option>
                 <option value="WHATSAPP">WHATSAPP</option>
-                <option value="REST">REST</option>
                 <option value="EDI">EDI</option>
               </select>
             </div>
-            <div style={styles.formRow}>
-              <label style={styles.label}>Recipient Email</label>
-              <input
-                type="email"
-                style={styles.input}
-                value={cfg.recipientEmail || ''}
-                onChange={e => updateField(supplier.id, 'recipientEmail', e.target.value)}
-              />
-            </div>
-            <div style={styles.formRow}>
-              <label style={styles.label}>Subject Template</label>
-              <input
-                type="text"
-                style={styles.input}
-                value={cfg.subjectTemplate || ''}
-                placeholder="Order for {supplierName} on {date}"
-                onChange={e => updateField(supplier.id, 'subjectTemplate', e.target.value)}
-              />
-            </div>
-            <div style={styles.formRow}>
-              <label style={styles.label}>Body Template</label>
-              <textarea
-                style={{ ...styles.input, height: 100, resize: 'vertical' }}
-                value={cfg.bodyTemplate || ''}
-                placeholder="Dear {supplierName},&#10;&#10;{orderLines}"
-                onChange={e => updateField(supplier.id, 'bodyTemplate', e.target.value)}
-              />
-            </div>
+            {cfg.connectorTypeName === 'WHATSAPP' ? (
+              <>
+                <div style={styles.formRow}>
+                  <label style={styles.label}>Recipient Phone</label>
+                  <input
+                    type="text"
+                    style={styles.input}
+                    value={cfg.recipientPhone || ''}
+                    placeholder="4366000000001"
+                    onChange={e => updateField(supplier.id, 'recipientPhone', e.target.value)}
+                  />
+                </div>
+                <div style={styles.formRow}>
+                  <label style={styles.label}>Message Template</label>
+                  <textarea
+                    style={{ ...styles.input, height: 100, resize: 'vertical' }}
+                    value={cfg.messageTemplate || ''}
+                    placeholder="Order {date} - {supplierName}:{'\n\n'}{orderLines}"
+                    onChange={e => updateField(supplier.id, 'messageTemplate', e.target.value)}
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={styles.formRow}>
+                  <label style={styles.label}>Recipient Email</label>
+                  <input
+                    type="email"
+                    style={styles.input}
+                    value={cfg.recipientEmail || ''}
+                    onChange={e => updateField(supplier.id, 'recipientEmail', e.target.value)}
+                  />
+                </div>
+                <div style={styles.formRow}>
+                  <label style={styles.label}>Subject Template</label>
+                  <input
+                    type="text"
+                    style={styles.input}
+                    value={cfg.subjectTemplate || ''}
+                    placeholder="Order for {supplierName} on {date}"
+                    onChange={e => updateField(supplier.id, 'subjectTemplate', e.target.value)}
+                  />
+                </div>
+                <div style={styles.formRow}>
+                  <label style={styles.label}>Body Template</label>
+                  <textarea
+                    style={{ ...styles.input, height: 100, resize: 'vertical' }}
+                    value={cfg.bodyTemplate || ''}
+                    placeholder="Dear {supplierName},&#10;&#10;{orderLines}"
+                    onChange={e => updateField(supplier.id, 'bodyTemplate', e.target.value)}
+                  />
+                </div>
+              </>
+            )}
             <button
               style={styles.btn('primary')}
               onClick={() => save(supplier.id)}
@@ -375,11 +405,25 @@ function SmtpSettingsTab() {
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState(null)
 
+  // WPPConnect state
+  const [wpp, setWpp] = useState({ baseUrl: '', secretKey: '', session: '', tokenConfigured: false })
+  const [wppLoading, setWppLoading] = useState(true)
+  const [wppSaving, setWppSaving] = useState(false)
+  const [wppMessage, setWppMessage] = useState(null)
+  const [wppQrCode, setWppQrCode] = useState(null)
+  const [wppGenerating, setWppGenerating] = useState(false)
+  const [wppPolling, setWppPolling] = useState(false)
+
   useEffect(() => {
     api.getSmtpSettings()
       .then(data => setSettings({ ...data, password: '' }))
       .catch(e => setMessage({ type: 'error', text: e.message }))
       .finally(() => setLoading(false))
+
+    api.getWppConnectSettings()
+      .then(data => setWpp(data))
+      .catch(e => setWppMessage({ type: 'error', text: e.message }))
+      .finally(() => setWppLoading(false))
   }, [])
 
   const handleChange = (field, value) => {
@@ -398,6 +442,74 @@ function SmtpSettingsTab() {
     } finally {
       setSaving(false)
     }
+  }
+
+  const handleWppChange = (field, value) => {
+    setWpp(prev => ({ ...prev, [field]: value }))
+  }
+
+  const handleWppSave = async () => {
+    setWppSaving(true)
+    setWppMessage(null)
+    try {
+      await api.updateWppConnectSettings({
+        baseUrl: wpp.baseUrl,
+        secretKey: wpp.secretKey,
+        session: wpp.session,
+      })
+      setWppMessage({ type: 'success', text: 'WPPConnect settings saved!' })
+    } catch (e) {
+      setWppMessage({ type: 'error', text: 'Failed to save: ' + e.message })
+    } finally {
+      setWppSaving(false)
+    }
+  }
+
+  const handleGenerateToken = async () => {
+    setWppGenerating(true)
+    setWppMessage(null)
+    try {
+      await api.generateWppConnectToken()
+      setWppMessage({ type: 'success', text: 'Token generated successfully!' })
+      setWpp(prev => ({ ...prev, tokenConfigured: true }))
+    } catch (e) {
+      setWppMessage({ type: 'error', text: 'Token generation failed: ' + e.message })
+    } finally {
+      setWppGenerating(false)
+    }
+  }
+
+  // Poll for QR code every 3 seconds while wppPolling=true
+  useEffect(() => {
+    if (!wppPolling) return
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const data = await api.getWppConnectQrCode()
+        if (cancelled) return
+        if (data.qrcode) {
+          setWppQrCode(data.qrcode)
+          setWppPolling(false)
+          setWppMessage({ type: 'success', text: 'QR code ready — scan with WhatsApp!' })
+        }
+      } catch (e) {
+        if (!cancelled) setWppMessage({ type: 'error', text: 'Failed to load QR code: ' + e.message })
+      }
+    }
+    poll()
+    const interval = setInterval(poll, 3000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [wppPolling])
+
+  const handleShowQrCode = () => {
+    setWppQrCode(null)
+    setWppMessage({ type: 'success', text: 'Starting WhatsApp session… this may take up to 40 seconds.' })
+    setWppPolling(true)
+  }
+
+  const handleStopQrPolling = () => {
+    setWppPolling(false)
+    setWppMessage(null)
   }
 
   if (loading) return <div>Loading SMTP settings...</div>
@@ -458,6 +570,71 @@ function SmtpSettingsTab() {
         <button style={styles.btn('primary')} onClick={handleSave} disabled={saving}>
           {saving ? 'Saving...' : 'Save Settings'}
         </button>
+      </div>
+
+      <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16, marginTop: 32 }}>WhatsApp (WPPConnect)</h2>
+      <div style={{ ...styles.card, maxWidth: 500 }}>
+        {wppLoading ? <div>Loading WPPConnect settings...</div> : (
+          <>
+            {wppMessage && <div style={styles.alert(wppMessage.type)}>{wppMessage.text}</div>}
+            <div style={styles.formRow}>
+              <label style={styles.label}>WPPConnect Base URL</label>
+              <input
+                type="text"
+                style={styles.input}
+                value={wpp.baseUrl || ''}
+                placeholder="http://wppconnect:21465"
+                onChange={e => handleWppChange('baseUrl', e.target.value)}
+              />
+            </div>
+            <div style={styles.formRow}>
+              <label style={styles.label}>Secret Key</label>
+              <input
+                type="password"
+                style={styles.input}
+                value={wpp.secretKey || ''}
+                placeholder="Enter secret key"
+                onChange={e => handleWppChange('secretKey', e.target.value)}
+              />
+            </div>
+            <div style={styles.formRow}>
+              <label style={styles.label}>Session Name</label>
+              <input
+                type="text"
+                style={styles.input}
+                value={wpp.session || ''}
+                placeholder="inventory-session"
+                onChange={e => handleWppChange('session', e.target.value)}
+              />
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <span style={{ fontSize: 13, color: '#555' }}>
+                Token status: {wpp.tokenConfigured ? '✓ Configured' : '✗ Not configured'}
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button style={styles.btn('primary')} onClick={handleWppSave} disabled={wppSaving}>
+                {wppSaving ? 'Saving...' : 'Save Settings'}
+              </button>
+              <button style={styles.btn('secondary')} onClick={handleGenerateToken} disabled={wppGenerating}>
+                {wppGenerating ? 'Generating...' : 'Generate Token'}
+              </button>
+              {wppPolling
+                ? <button style={styles.btn('danger')} onClick={handleStopQrPolling}>Stop Polling</button>
+                : <button style={styles.btn('secondary')} onClick={handleShowQrCode}>Show QR Code</button>
+              }
+            </div>
+            {wppQrCode && (
+              <div style={{ marginTop: 16 }}>
+                <img
+                  src={wppQrCode.startsWith('data:') ? wppQrCode : `data:image/png;base64,${wppQrCode}`}
+                  alt="WPPConnect QR Code"
+                  style={{ maxWidth: 256, border: '1px solid #e0e0e0', borderRadius: 8 }}
+                />
+              </div>
+            )}
+          </>
+        )}
       </div>
     </div>
   )

@@ -55,6 +55,8 @@ public class ConnectorOrchestrator implements OrderProcessor {
 
     private SupplierOrder createSupplierOrder(ReplenishmentOrder replenishmentOrder,
                                                SupplierOrderSplitter.SupplierSplit split) {
+        log.debug("→ createSupplierOrder(replenishmentOrderId={}, supplier={})",
+                replenishmentOrder.getId(), split.supplier().getName());
         SupplierOrder supplierOrder = new SupplierOrder();
         supplierOrder.setReplenishmentOrder(replenishmentOrder);
         supplierOrder.setSupplier(split.supplier());
@@ -72,13 +74,17 @@ public class ConnectorOrchestrator implements OrderProcessor {
             orderLines.add(supplierOrderLineRepository.save(line));
         }
         supplierOrder.setLines(orderLines);
+        log.debug("← createSupplierOrder: created SupplierOrder id={}", supplierOrder.getId());
         return supplierOrder;
     }
 
     private List<ConnectorResult> transmit(SupplierOrder supplierOrder,
                                             SupplierOrderSplitter.SupplierSplit split) {
+        log.debug("→ transmit(supplierOrderId={}, supplier={})",
+                supplierOrder.getId(), split.supplier().getName());
         List<ConnectorResult> results = new ArrayList<>();
 
+        log.debug("  looking up active ConnectorConfig for supplierId={}", split.supplier().getId());
         ConnectorConfig config = connectorConfigRepository
                 .findBySupplierIdAndIsActiveTrue(split.supplier().getId())
                 .orElse(null);
@@ -87,6 +93,7 @@ public class ConnectorOrchestrator implements OrderProcessor {
             log.warn("No active connector config for supplier {}", split.supplier().getId());
             return results;
         }
+        log.debug("  found ConnectorConfig id={}, type={}", config.getId(), config.getConnectorType().getName());
 
         String connectorTypeName = config.getConnectorType().getName();
         if (!connectorRegistry.hasConnector(connectorTypeName)) {
@@ -95,22 +102,31 @@ public class ConnectorOrchestrator implements OrderProcessor {
         }
 
         OutboundConnector connector = connectorRegistry.getConnector(connectorTypeName);
+        log.debug("  resolved connector: {} ({})", connectorTypeName, connector.getClass().getSimpleName());
+
         SupplierOrderPayload payload = buildPayload(supplierOrder, split);
 
         ConnectorResult result;
+        log.debug("  calling {}.transmit() for supplierOrderId={}", connector.getClass().getSimpleName(), supplierOrder.getId());
         try {
             result = connector.transmit(payload, config);
         } catch (Exception e) {
+            log.error("  {}.transmit() threw {}: {}", connector.getClass().getSimpleName(), e.getClass().getSimpleName(), e.getMessage());
             result = ConnectorResult.failure(e.getMessage());
         }
+        log.debug("  {}.transmit() returned: success={}, message='{}'",
+                connector.getClass().getSimpleName(), result.success(), result.message());
 
         results.add(result);
         recordExecution(supplierOrder, config, result);
+        log.debug("← transmit: {} result(s)", results.size());
         return results;
     }
 
     private SupplierOrderPayload buildPayload(SupplierOrder supplierOrder,
                                                SupplierOrderSplitter.SupplierSplit split) {
+        log.debug("→ buildPayload(supplierOrderId={}, lineCount={})",
+                supplierOrder.getId(), split.lines().size());
         List<SupplierOrderPayload.OrderLineItem> lineItems = split.lines().stream()
                 .map(sl -> new SupplierOrderPayload.OrderLineItem(
                         sl.orderLine().getInventoryItem().getName(),
@@ -120,15 +136,21 @@ public class ConnectorOrchestrator implements OrderProcessor {
                 ))
                 .toList();
 
-        return new SupplierOrderPayload(
+        SupplierOrderPayload result = new SupplierOrderPayload(
                 supplierOrder.getId(),
                 split.supplier().getName(),
                 LocalDate.now().toString(),
                 lineItems
         );
+        log.debug("← buildPayload: payload for supplier '{}', {} lines", result.supplierName(), result.lines().size());
+        result.lines().forEach(l -> log.debug("    line: {} (SKU: {}) x {} {}",
+                l.inventoryItemName(), l.supplierSku(), l.orderedQty(), l.unit()));
+        return result;
     }
 
     private void recordExecution(SupplierOrder supplierOrder, ConnectorConfig config, ConnectorResult result) {
+        log.debug("→ recordExecution(supplierOrderId={}, status={})",
+                supplierOrder.getId(), result.success() ? "SUCCESS" : "FAILED");
         ConnectorExecution execution = new ConnectorExecution();
         execution.setSupplierOrder(supplierOrder);
         execution.setConnectorConfig(config);
@@ -138,5 +160,6 @@ public class ConnectorOrchestrator implements OrderProcessor {
         execution.setErrorMessage(result.success() ? null : result.message());
         execution.setExecutedAt(LocalDateTime.now());
         connectorExecutionRepository.save(execution);
+        log.debug("← recordExecution: saved ConnectorExecution id={}", execution.getId());
     }
 }

@@ -59,6 +59,7 @@ public class EmailConnector implements OutboundConnector {
             message.setSubject(subject);
             message.setText(body);
 
+            log.debug("Sending email — to={} subject='{}'\n{}", recipientEmail, subject, body);
             mailSender.send(message);
 
             log.info("Email sent to {} for supplier order {}", recipientEmail, payload.supplierOrderId());

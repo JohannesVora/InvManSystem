@@ -30,7 +30,8 @@ FROM eclipse-temurin:21-jre-alpine
 
 WORKDIR /app
 
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data && \
+    mkdir -p /app/logs
 
 COPY --from=builder /build/app/target/app-1.0.0-SNAPSHOT.jar app.jar
 

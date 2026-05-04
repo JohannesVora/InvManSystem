@@ -16,12 +16,10 @@ class ConnectorRegistryTest {
     @Test
     void registersConnectorsFromList() {
         OutboundConnector emailConnector = new TestConnector("EMAIL");
-        OutboundConnector restConnector = new TestConnector("REST");
 
-        ConnectorRegistry registry = new ConnectorRegistry(List.of(emailConnector, restConnector));
+        ConnectorRegistry registry = new ConnectorRegistry(List.of(emailConnector));
 
         assertThat(registry.hasConnector("EMAIL")).isTrue();
-        assertThat(registry.hasConnector("REST")).isTrue();
         assertThat(registry.hasConnector("EDI")).isFalse();
     }
 

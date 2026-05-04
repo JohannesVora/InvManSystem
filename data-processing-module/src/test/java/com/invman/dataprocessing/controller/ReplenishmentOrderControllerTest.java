@@ -33,6 +33,7 @@ class ReplenishmentOrderControllerTest {
                 1L, ReplenishmentOrderStatus.DRAFT, LocalDateTime.now(), null);
 
         when(replenishmentService.createOrder(any())).thenReturn(dto);
+        when(replenishmentService.getOrder(1L)).thenReturn(dto);
 
         ReplenishmentOrderRequest request = new ReplenishmentOrderRequest(
                 List.of(new ReplenishmentOrderRequest.OrderLine(1L, 25.0)));

@@ -25,4 +25,8 @@ export const api = {
   createReplenishmentOrder: (data) => request('POST', '/orders/replenishment', data),
   getSmtpSettings: () => request('GET', '/settings/smtp'),
   updateSmtpSettings: (data) => request('PUT', '/settings/smtp', data),
+  getWppConnectSettings: () => request('GET', '/settings/wppconnect'),
+  updateWppConnectSettings: (data) => request('PUT', '/settings/wppconnect', data),
+  generateWppConnectToken: () => request('POST', '/settings/wppconnect/generate-token'),
+  getWppConnectQrCode: () => request('GET', '/settings/wppconnect/qrcode'),
 }
