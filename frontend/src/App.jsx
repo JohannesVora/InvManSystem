@@ -68,6 +68,28 @@ const styles = {
     color: type === 'success' ? '#2b8a3e' : '#c92a2a',
     fontWeight: 500,
   }),
+  subTabs: { display: 'flex', gap: 8, marginBottom: 20, borderBottom: '1px solid #e0e0e0' },
+  twoCol: { display: 'flex', gap: 16 },
+  leftPanel: { width: 280, flexShrink: 0 },
+  rightPanel: { flex: 1, minWidth: 0 },
+  overlay: {
+    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+  },
+  modal: {
+    background: '#fff', borderRadius: 10, padding: 28, width: 480, maxWidth: '95vw',
+    maxHeight: '90vh', overflowY: 'auto',
+  },
+  warningBox: {
+    padding: '10px 14px', borderRadius: 6, marginBottom: 12,
+    background: '#fff9db', color: '#7c5800', border: '1px solid #ffe066', fontSize: 13,
+  },
+  listItem: (active) => ({
+    padding: '10px 14px', cursor: 'pointer', borderRadius: 6, marginBottom: 4,
+    background: active ? '#e8f0ff' : 'transparent',
+    fontWeight: active ? 600 : 400,
+    color: active ? '#3b5bdb' : '#333',
+  }),
 }
 
 // ─── Tab 1: Order ─────────────────────────────────────────────────────────────
@@ -640,10 +662,466 @@ function SmtpSettingsTab() {
   )
 }
 
+// ─── Tab 4: Supplier Catalog ──────────────────────────────────────────────────
+
+// --- OfferModal ---
+function OfferModal({ offer, supplierId, onClose, onSaved }) {
+  const [form, setForm] = useState(offer
+    ? { supplierSku: offer.supplierSku || '', supplierProductName: offer.supplierProductName || '',
+        packageUnit: offer.packageUnit || '', conversionFactor: offer.conversionFactor ?? 1, unitPrice: offer.unitPrice ?? '' }
+    : { supplierSku: '', supplierProductName: '', packageUnit: '', conversionFactor: 1, unitPrice: '' }
+  )
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState(null)
+
+  const handleSave = async () => {
+    setSaving(true)
+    setErr(null)
+    try {
+      const data = { ...form, supplierId, conversionFactor: parseFloat(form.conversionFactor), unitPrice: parseFloat(form.unitPrice) }
+      if (offer) {
+        await api.updateSupplierOffer(offer.id, data)
+      } else {
+        await api.createSupplierOffer(data)
+      }
+      onSaved()
+    } catch (e) {
+      setErr(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={styles.overlay}>
+      <div style={styles.modal}>
+        <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 18 }}>{offer ? 'Edit Offer' : 'New Offer'}</h3>
+        {err && <div style={styles.alert('error')}>{err}</div>}
+        <div style={styles.formRow}>
+          <label style={styles.label}>SKU</label>
+          <input style={styles.input} value={form.supplierSku} onChange={e => setForm(p => ({ ...p, supplierSku: e.target.value }))} />
+        </div>
+        <div style={styles.formRow}>
+          <label style={styles.label}>Product Name</label>
+          <input style={styles.input} value={form.supplierProductName} onChange={e => setForm(p => ({ ...p, supplierProductName: e.target.value }))} />
+        </div>
+        <div style={styles.formRow}>
+          <label style={styles.label}>Package Unit</label>
+          <input style={styles.input} value={form.packageUnit} onChange={e => setForm(p => ({ ...p, packageUnit: e.target.value }))} />
+        </div>
+        <div style={styles.formRow}>
+          <label style={styles.label}>Conversion Factor</label>
+          <input type="number" step="0.001" style={styles.input} value={form.conversionFactor}
+            onChange={e => setForm(p => ({ ...p, conversionFactor: e.target.value }))} />
+          <div style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
+            1 {form.packageUnit || 'unit'} = {form.conversionFactor} × canonical unit
+          </div>
+        </div>
+        <div style={styles.formRow}>
+          <label style={styles.label}>Price</label>
+          <input type="number" step="0.01" style={styles.input} value={form.unitPrice}
+            onChange={e => setForm(p => ({ ...p, unitPrice: e.target.value }))} />
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          <button style={styles.btn('primary')} onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+          <button style={styles.btn('secondary')} onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// --- LinkDialog ---
+function LinkDialog({ offer, inventoryItems, onClose, onLinked }) {
+  const [filter, setFilter] = useState('')
+  const [selectedItem, setSelectedItem] = useState(null)
+  const [isPreferred, setIsPreferred] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState(null)
+
+  const filtered = inventoryItems.filter(it =>
+    it.name.toLowerCase().includes(filter.toLowerCase())
+  )
+
+  const showWarning = selectedItem
+    && offer.conversionFactor === 1.0
+    && offer.packageUnit
+    && offer.packageUnit.toLowerCase() !== (selectedItem.unit || '').toLowerCase()
+
+  const handleLink = async () => {
+    if (!selectedItem) return
+    setSaving(true)
+    setErr(null)
+    try {
+      const res = await api.linkSupplierOfferItem(offer.id, { inventoryItemId: selectedItem.id, isPreferred })
+      onLinked(res.warning)
+    } catch (e) {
+      setErr(e.message)
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={styles.overlay}>
+      <div style={{ ...styles.modal, width: 520 }}>
+        <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>Link: {offer.supplierProductName || offer.supplierSku}</h3>
+        <p style={{ fontSize: 13, color: '#888', marginBottom: 14 }}>Select an inventory item to link this offer to</p>
+        {err && <div style={styles.alert('error')}>{err}</div>}
+        <input
+          style={{ ...styles.input, marginBottom: 10 }}
+          placeholder="Filter items..."
+          value={filter}
+          onChange={e => setFilter(e.target.value)}
+        />
+        <div style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid #e0e0e0', borderRadius: 6, marginBottom: 12 }}>
+          {filtered.map(it => (
+            <div key={it.id} style={styles.listItem(selectedItem?.id === it.id)}
+              onClick={() => setSelectedItem(it)}>
+              {it.name} <span style={{ color: '#888', fontSize: 12 }}>({it.unit})</span>
+            </div>
+          ))}
+        </div>
+        {selectedItem && (
+          <div style={{ fontSize: 13, color: '#555', marginBottom: 10 }}>
+            Preview: 1 {offer.packageUnit || 'package'} = {offer.conversionFactor} × {selectedItem.unit}
+          </div>
+        )}
+        {showWarning && (
+          <div style={styles.warningBox}>
+            Warning: Conversion factor is 1.0 but supplier unit '{offer.packageUnit}' ≠ canonical unit '{selectedItem.unit}'. Please check!
+          </div>
+        )}
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ fontSize: 14, cursor: 'pointer' }}>
+            <input type="checkbox" checked={isPreferred} onChange={e => setIsPreferred(e.target.checked)} style={{ marginRight: 8 }} />
+            Set as preferred supplier
+          </label>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={styles.btn('primary')} onClick={handleLink} disabled={saving || !selectedItem}>
+            {saving ? 'Linking...' : 'Link'}
+          </button>
+          <button style={styles.btn('secondary')} onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// --- AddComponentModal ---
+function AddComponentModal({ salesProduct, inventoryItems, onClose, onAdded }) {
+  const [selectedItemId, setSelectedItemId] = useState('')
+  const [qty, setQty] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState(null)
+
+  const selectedItem = inventoryItems.find(it => it.id === parseInt(selectedItemId))
+
+  const handleAdd = async () => {
+    if (!selectedItemId || !qty) return
+    setSaving(true)
+    setErr(null)
+    try {
+      await api.addItemComponent(parseInt(selectedItemId), { salesProductId: salesProduct.id, qtyRequired: parseFloat(qty) })
+      onAdded()
+    } catch (e) {
+      if (e.message.startsWith('409')) {
+        setErr('This mapping already exists')
+      } else {
+        setErr(e.message)
+      }
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={styles.overlay}>
+      <div style={styles.modal}>
+        <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 18 }}>Add Ingredient</h3>
+        {err && <div style={styles.alert('error')}>{err}</div>}
+        <div style={styles.formRow}>
+          <label style={styles.label}>Inventory Item</label>
+          <select style={styles.input} value={selectedItemId} onChange={e => setSelectedItemId(e.target.value)}>
+            <option value="">— select item —</option>
+            {inventoryItems.map(it => (
+              <option key={it.id} value={it.id}>{it.name} ({it.unit})</option>
+            ))}
+          </select>
+        </div>
+        <div style={styles.formRow}>
+          <label style={styles.label}>
+            Qty per sold '{salesProduct.name}' in {selectedItem?.unit ?? '…'}
+          </label>
+          <input type="number" step="0.001" style={styles.input} value={qty}
+            onChange={e => setQty(e.target.value)} />
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={styles.btn('primary')} onClick={handleAdd} disabled={saving || !selectedItemId || !qty}>
+            {saving ? 'Adding...' : 'Add'}
+          </button>
+          <button style={styles.btn('secondary')} onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SupplierCatalogTab() {
+  const [subTab, setSubTab] = useState('offers')
+  const [suppliers, setSuppliers] = useState([])
+  const [selectedSupplierId, setSelectedSupplierId] = useState('')
+  const [offers, setOffers] = useState([])
+  const [inventoryItems, setInventoryItems] = useState([])
+  const [salesProducts, setSalesProducts] = useState([])
+  const [selectedProduct, setSelectedProduct] = useState(null)
+  const [components, setComponents] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [message, setMessage] = useState(null)
+  const [offerModal, setOfferModal] = useState(null) // null | { offer? }
+  const [linkDialog, setLinkDialog] = useState(null) // null | offer
+  const [addComponentModal, setAddComponentModal] = useState(false)
+  const fileInputRef = React.useRef(null)
+
+  useEffect(() => {
+    api.getSuppliers().then(setSuppliers).catch(() => {})
+    api.getInventory().then(setInventoryItems).catch(() => {})
+    api.getSalesProducts().then(setSalesProducts).catch(() => {})
+  }, [])
+
+  const loadOffers = useCallback(async (supplierId) => {
+    if (!supplierId) return
+    setLoading(true)
+    try {
+      const data = await api.getSupplierOffers(supplierId)
+      setOffers(data)
+    } catch (e) {
+      setMessage({ type: 'error', text: 'Failed to load offers: ' + e.message })
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  const loadComponents = useCallback(async (sp) => {
+    if (!sp) return
+    try {
+      const data = await api.getSalesProductComponents(sp.id)
+      setComponents(data)
+    } catch (e) {
+      setMessage({ type: 'error', text: 'Failed to load components: ' + e.message })
+    }
+  }, [])
+
+  useEffect(() => { loadOffers(selectedSupplierId) }, [selectedSupplierId, loadOffers])
+  useEffect(() => { loadComponents(selectedProduct) }, [selectedProduct, loadComponents])
+
+  const handleSupplierChange = (e) => {
+    setSelectedSupplierId(e.target.value)
+    setOffers([])
+  }
+
+  const handleImportExcel = async (e) => {
+    const file = e.target.files[0]
+    if (!file || !selectedSupplierId) return
+    e.target.value = ''
+    setMessage(null)
+    try {
+      const result = await api.importSupplierOffersExcel(selectedSupplierId, file)
+      setMessage({ type: 'success', text: `Import done: ${result.imported} imported, ${result.updated} updated, ${result.skipped} skipped` })
+      await loadOffers(selectedSupplierId)
+    } catch (e) {
+      setMessage({ type: 'error', text: 'Import failed: ' + e.message })
+    }
+  }
+
+  const handleDeleteOffer = async (id) => {
+    if (!window.confirm('Delete this offer?')) return
+    try {
+      await api.deleteSupplierOffer(id)
+      setOffers(prev => prev.filter(o => o.id !== id))
+    } catch (e) {
+      setMessage({ type: 'error', text: 'Delete failed: ' + e.message })
+    }
+  }
+
+  const handleDeleteComponent = async (id) => {
+    if (!window.confirm('Remove this ingredient?')) return
+    try {
+      await api.deleteItemComponent(id)
+      setComponents(prev => prev.filter(c => c.id !== id))
+    } catch (e) {
+      setMessage({ type: 'error', text: 'Delete failed: ' + e.message })
+    }
+  }
+
+  return (
+    <div>
+      {message && <div style={styles.alert(message.type)}>{message.text}</div>}
+      <div style={styles.subTabs}>
+        <button style={styles.tab(subTab === 'offers')} onClick={() => setSubTab('offers')}>Offers</button>
+        <button style={styles.tab(subTab === 'pos')} onClick={() => setSubTab('pos')}>POS Mappings</button>
+      </div>
+
+      {subTab === 'offers' && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+            <select style={{ ...styles.input, width: 240 }} value={selectedSupplierId} onChange={handleSupplierChange}>
+              <option value="">— select supplier —</option>
+              {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+            <input ref={fileInputRef} type="file" accept=".xlsx" style={{ display: 'none' }} onChange={handleImportExcel} />
+            <button style={styles.btn('secondary')} onClick={() => fileInputRef.current?.click()} disabled={!selectedSupplierId}>
+              📤 Import Excel
+            </button>
+            <button style={styles.btn('primary')} onClick={() => setOfferModal({})} disabled={!selectedSupplierId}>
+              + New Offer
+            </button>
+          </div>
+          {loading ? <div>Loading offers...</div> : (
+            <div style={styles.card}>
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th style={styles.th}>SKU</th>
+                    <th style={styles.th}>Product Name</th>
+                    <th style={styles.th}>Unit</th>
+                    <th style={styles.th}>Factor</th>
+                    <th style={styles.th}>Price</th>
+                    <th style={styles.th}>Linked Item</th>
+                    <th style={styles.th}>Preferred</th>
+                    <th style={styles.th}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {offers.map(offer => (
+                    <tr key={offer.id}>
+                      <td style={styles.td(false)}>{offer.supplierSku}</td>
+                      <td style={styles.td(false)}>{offer.supplierProductName}</td>
+                      <td style={styles.td(false)}>{offer.packageUnit}</td>
+                      <td style={styles.td(false)}>{offer.conversionFactor}</td>
+                      <td style={styles.td(false)}>{offer.unitPrice != null ? offer.unitPrice.toFixed(2) : ''}</td>
+                      <td style={styles.td(false)}>
+                        <span
+                          style={{ color: offer.inventoryItemName ? '#3b5bdb' : '#bbb', cursor: 'pointer', textDecoration: 'underline' }}
+                          onClick={() => setLinkDialog(offer)}
+                        >
+                          {offer.inventoryItemName ?? '— not linked —'}
+                        </span>
+                      </td>
+                      <td style={styles.td(false)}>{offer.isPreferred ? '✓' : '–'}</td>
+                      <td style={styles.td(false)}>
+                        <button style={{ ...styles.btn('secondary'), marginRight: 4 }} onClick={() => setOfferModal({ offer })}>Edit</button>
+                        <button style={styles.btn('danger')} onClick={() => handleDeleteOffer(offer.id)}>Delete</button>
+                      </td>
+                    </tr>
+                  ))}
+                  {offers.length === 0 && (
+                    <tr><td colSpan={8} style={{ ...styles.td(false), color: '#aaa', textAlign: 'center' }}>No offers</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {subTab === 'pos' && (
+        <div style={styles.twoCol}>
+          <div style={styles.leftPanel}>
+            <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>Sales Products</h3>
+            <div style={styles.card}>
+              {salesProducts.map(sp => (
+                <div key={sp.id} style={styles.listItem(selectedProduct?.id === sp.id)}
+                  onClick={() => setSelectedProduct(sp)}>
+                  {sp.name}
+                </div>
+              ))}
+              {salesProducts.length === 0 && <div style={{ color: '#aaa', fontSize: 13 }}>No sales products</div>}
+            </div>
+          </div>
+          <div style={styles.rightPanel}>
+            {selectedProduct ? (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 600 }}>Ingredients for: {selectedProduct.name}</h3>
+                  <button style={styles.btn('primary')} onClick={() => setAddComponentModal(true)}>+ Add Ingredient</button>
+                </div>
+                <p style={{ fontSize: 12, color: '#888', marginBottom: 12 }}>Quantities always in the canonical unit of the inventory item</p>
+                <div style={styles.card}>
+                  <table style={styles.table}>
+                    <thead>
+                      <tr>
+                        <th style={styles.th}>Inventory Item</th>
+                        <th style={styles.th}>Qty</th>
+                        <th style={styles.th}>Unit</th>
+                        <th style={styles.th}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {components.map(c => (
+                        <tr key={c.id}>
+                          <td style={styles.td(false)}>{c.inventoryItemName}</td>
+                          <td style={styles.td(false)}>{c.qtyRequired}</td>
+                          <td style={styles.td(false)}>{c.inventoryItemUnit}</td>
+                          <td style={styles.td(false)}>
+                            <button style={styles.btn('danger')} onClick={() => handleDeleteComponent(c.id)}>Delete</button>
+                          </td>
+                        </tr>
+                      ))}
+                      {components.length === 0 && (
+                        <tr><td colSpan={4} style={{ ...styles.td(false), color: '#aaa', textAlign: 'center' }}>No ingredients</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : (
+              <div style={{ color: '#aaa', marginTop: 40, textAlign: 'center' }}>Select a sales product to view its ingredients</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {offerModal !== null && (
+        <OfferModal
+          offer={offerModal.offer}
+          supplierId={parseInt(selectedSupplierId)}
+          onClose={() => setOfferModal(null)}
+          onSaved={() => { setOfferModal(null); loadOffers(selectedSupplierId) }}
+        />
+      )}
+
+      {linkDialog !== null && (
+        <LinkDialog
+          offer={linkDialog}
+          inventoryItems={inventoryItems}
+          onClose={() => setLinkDialog(null)}
+          onLinked={(warning) => {
+            setLinkDialog(null)
+            loadOffers(selectedSupplierId)
+            if (warning) setMessage({ type: 'error', text: warning })
+          }}
+        />
+      )}
+
+      {addComponentModal && selectedProduct && (
+        <AddComponentModal
+          salesProduct={selectedProduct}
+          inventoryItems={inventoryItems}
+          onClose={() => setAddComponentModal(false)}
+          onAdded={() => { setAddComponentModal(false); loadComponents(selectedProduct) }}
+        />
+      )}
+    </div>
+  )
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 const TABS = [
   { id: 'order', label: 'Order' },
   { id: 'supplier', label: 'Supplier Configuration' },
+  { id: 'catalog', label: 'Supplier Catalog' },
   { id: 'smtp', label: 'SMTP Settings' },
 ]
 
@@ -666,6 +1144,7 @@ export default function App() {
       </div>
       {activeTab === 'order' && <OrderTab />}
       {activeTab === 'supplier' && <SupplierConfigTab />}
+      {activeTab === 'catalog' && <SupplierCatalogTab />}
       {activeTab === 'smtp' && <SmtpSettingsTab />}
     </div>
   )

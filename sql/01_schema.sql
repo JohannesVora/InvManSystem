@@ -52,13 +52,15 @@ CREATE TABLE IF NOT EXISTS suppliers (
 );
 
 CREATE TABLE IF NOT EXISTS supplier_product_offers (
-    id                BIGSERIAL PRIMARY KEY,
-    supplier_id       BIGINT NOT NULL REFERENCES suppliers(id),
-    inventory_item_id BIGINT NOT NULL REFERENCES inventory_items(id),
-    supplier_sku      TEXT,
-    unit_price        DOUBLE PRECISION,
-    conversion_factor DOUBLE PRECISION DEFAULT 1.0,
-    is_preferred      BOOLEAN NOT NULL DEFAULT FALSE
+    id                     BIGSERIAL PRIMARY KEY,
+    supplier_id            BIGINT NOT NULL REFERENCES suppliers(id),
+    inventory_item_id      BIGINT REFERENCES inventory_items(id),
+    supplier_sku           TEXT,
+    supplier_product_name  TEXT,
+    package_unit           TEXT,
+    unit_price             DOUBLE PRECISION,
+    conversion_factor      DOUBLE PRECISION DEFAULT 1.0,
+    is_preferred           BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uidx_preferred_offer

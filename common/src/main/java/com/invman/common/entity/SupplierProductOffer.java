@@ -19,11 +19,17 @@ public class SupplierProductOffer {
     private Supplier supplier;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "inventory_item_id", nullable = false)
+    @JoinColumn(name = "inventory_item_id", nullable = true)
     private InventoryItem inventoryItem;
 
     @Column(name = "supplier_sku")
     private String supplierSku;
+
+    @Column(name = "supplier_product_name")
+    private String supplierProductName;
+
+    @Column(name = "package_unit")
+    private String packageUnit;
 
     @Column(name = "unit_price")
     private Double unitPrice;

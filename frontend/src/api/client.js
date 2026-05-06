@@ -29,4 +29,30 @@ export const api = {
   updateWppConnectSettings: (data) => request('PUT', '/settings/wppconnect', data),
   generateWppConnectToken: () => request('POST', '/settings/wppconnect/generate-token'),
   getWppConnectQrCode: () => request('GET', '/settings/wppconnect/qrcode'),
+
+  // Supplier catalog
+  getSupplierOffers:         (supplierId) => request('GET', `/suppliers/${supplierId}/offers`),
+  createSupplierOffer:       (data)       => request('POST', '/supplier-offers', data),
+  updateSupplierOffer:       (id, data)   => request('PUT', `/supplier-offers/${id}`, data),
+  deleteSupplierOffer:       (id)         => request('DELETE', `/supplier-offers/${id}`),
+  linkSupplierOfferItem:     (id, data)   => request('PUT', `/supplier-offers/${id}/link-item`, data),
+  importSupplierOffersExcel: async (supplierId, file) => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`${BASE_URL}/suppliers/${supplierId}/offers/import-excel`, {
+      method: 'POST',
+      body: form,
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`${res.status}: ${text}`)
+    }
+    return res.json()
+  },
+
+  // POS mappings
+  getSalesProducts:          ()           => request('GET', '/sales-products'),
+  getSalesProductComponents: (spId)       => request('GET', `/sales-products/${spId}/components`),
+  addItemComponent:          (itemId, data) => request('POST', `/inventory-items/${itemId}/components`, data),
+  deleteItemComponent:       (id)         => request('DELETE', `/product-components/${id}`),
 }
