@@ -7,5 +7,6 @@ public record InventoryItemDto(
         Double cachedStock,
         Double minStockLevel,
         Double reorderTarget,
-        boolean needsReorder
+        boolean needsReorder,
+        boolean hasPreferredOffer
 ) {}

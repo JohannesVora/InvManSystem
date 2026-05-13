@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { api } from './api/client.js'
+import PosConnectorSettings from './components/PosConnectorSettings.jsx'
 
 const styles = {
   container: { maxWidth: 1100, margin: '0 auto', padding: '24px 16px' },
@@ -201,7 +202,10 @@ function OrderTab() {
                     onChange={() => toggleSelect(item.id)}
                   />
                 </td>
-                <td style={styles.td(item.needsReorder)}>{item.name}</td>
+                <td style={{ ...styles.td(item.needsReorder), background: !item.hasPreferredOffer ? '#fff9db' : (item.needsReorder ? '#fff5f5' : 'transparent') }}>
+                  {!item.hasPreferredOffer && <span title="No supplier linked — will not be transmitted">⚠️ </span>}
+                  {item.name}
+                </td>
                 <td style={styles.td(item.needsReorder)}>{item.unit}</td>
                 <td style={styles.td(item.needsReorder)}>{item.cachedStock?.toFixed(2)}</td>
                 <td style={styles.td(item.needsReorder)}>{item.minStockLevel?.toFixed(2)}</td>
@@ -227,6 +231,365 @@ function OrderTab() {
           </tbody>
         </table>
       </div>
+      <p style={{ fontSize: 12, color: '#7c5800', marginTop: 8 }}>
+        ⚠️ Items marked with ⚠️ have no supplier linked and will not be transmitted.
+      </p>
+    </div>
+  )
+}
+
+// ─── Inventory sub-tabs: History ──────────────────────────────────────────────
+function GoodsReceiptDialog({ order, onClose, onBooked }) {
+  // quantities are always stored in supplier units when conversionFactor present, else inventory units
+  const [quantities, setQuantities] = useState(() => {
+    const m = {}
+    order.lines.forEach(l => {
+      const cf = l.conversionFactor && l.conversionFactor > 1 ? l.conversionFactor : null
+      m[l.inventoryItemId] = cf
+        ? String(Math.ceil(l.requestedQty / cf))
+        : String(l.requestedQty ?? '')
+    })
+    return m
+  })
+  const [submitting, setSubmitting] = useState(false)
+  const [err, setErr] = useState(null)
+
+  const confirm = async () => {
+    setSubmitting(true)
+    setErr(null)
+    try {
+      const lines = order.lines.map(l => {
+        const cf = l.conversionFactor && l.conversionFactor > 1 ? l.conversionFactor : 1
+        const supplierQty = parseFloat(quantities[l.inventoryItemId] || 0)
+        return { inventoryItemId: l.inventoryItemId, receivedQty: supplierQty * cf }
+      })
+      const updated = await api.bookGoodsReceipt(order.id, { lines })
+      onBooked(updated)
+    } catch (e) {
+      setErr(e.message)
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div style={styles.overlay}>
+      <div style={styles.modal}>
+        <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 16 }}>Book Goods Receipt — Order #{order.id}</h3>
+        {err && <div style={styles.alert('error')}>{err}</div>}
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={styles.th}>Item</th>
+              <th style={styles.th}>Ordered</th>
+              <th style={styles.th}>Received</th>
+            </tr>
+          </thead>
+          <tbody>
+            {order.lines.map(l => {
+              const cf = l.conversionFactor && l.conversionFactor > 1 ? l.conversionFactor : null
+              const supplierQty = parseFloat(quantities[l.inventoryItemId] || 0)
+              const inventoryQty = cf ? supplierQty * cf : supplierQty
+              return (
+                <tr key={l.inventoryItemId}>
+                  <td style={styles.td(false)}>
+                    <div style={{ fontWeight: 600 }}>{l.inventoryItemName}</div>
+                    {l.supplierSku && <div style={{ fontSize: 12, color: '#888' }}>SKU: {l.supplierSku}</div>}
+                  </td>
+                  <td style={styles.td(false)}>
+                    {l.requestedQty} {l.inventoryItemUnit}
+                    {cf && <div style={{ fontSize: 12, color: '#888' }}>≈ {Math.ceil(l.requestedQty / cf)} {l.packageUnit}</div>}
+                  </td>
+                  <td style={styles.td(false)}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        style={{ ...styles.input, width: 80 }}
+                        value={quantities[l.inventoryItemId] ?? ''}
+                        onChange={e => setQuantities(prev => ({ ...prev, [l.inventoryItemId]: e.target.value }))}
+                      />
+                      <span style={{ fontSize: 13, color: '#555' }}>{cf ? l.packageUnit : l.inventoryItemUnit}</span>
+                    </div>
+                    {cf && <div style={{ fontSize: 12, color: '#888', marginTop: 3 }}>= {inventoryQty.toFixed(0)} {l.inventoryItemUnit}</div>}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+        <div style={{ marginTop: 20, display: 'flex', gap: 8 }}>
+          <button style={styles.btn('primary')} onClick={confirm} disabled={submitting}>
+            {submitting ? 'Confirming...' : 'Confirm Receipt'}
+          </button>
+          <button style={styles.btn('secondary')} onClick={onClose} disabled={submitting}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function OrderHistorySubTab() {
+  const [orders, setOrders] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [message, setMessage] = useState(null)
+  const [receiptDialog, setReceiptDialog] = useState(null)
+  const [expandedId, setExpandedId] = useState(null)
+
+  useEffect(() => {
+    api.getAllOrders()
+      .then(setOrders)
+      .catch(e => setMessage({ type: 'error', text: e.message }))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const statusBadge = (status) => {
+    const colors = {
+      DRAFT:     { bg: '#e9ecef', color: '#555' },
+      SUBMITTED: { bg: '#e8f0ff', color: '#3b5bdb' },
+      CONFIRMED: { bg: '#e8f0ff', color: '#3b5bdb' },
+      CANCELLED: { bg: '#ffe0e0', color: '#c92a2a' },
+      RECEIVED:  { bg: '#e6f4ea', color: '#2b8a3e' },
+    }
+    const c = colors[status] || { bg: '#e9ecef', color: '#555' }
+    return (
+      <span style={{ ...c, padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, display: 'inline-block' }}>
+        {status}
+      </span>
+    )
+  }
+
+  if (loading) return <div>Loading orders...</div>
+
+  return (
+    <div>
+      {message && <div style={styles.alert(message.type)}>{message.text}</div>}
+      <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Order History</h2>
+      <div style={styles.card}>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={styles.th}></th>
+              <th style={styles.th}>Order #</th>
+              <th style={styles.th}>Date</th>
+              <th style={styles.th}>Status</th>
+              <th style={styles.th}>Items</th>
+              <th style={styles.th}>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {orders.map(order => {
+              const expanded = expandedId === order.id
+              return (
+                <React.Fragment key={order.id}>
+                  <tr
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => setExpandedId(expanded ? null : order.id)}
+                  >
+                    <td style={styles.td(false)}>
+                      <span style={{ fontSize: 11, color: '#888' }}>{expanded ? '▼' : '▶'}</span>
+                    </td>
+                    <td style={styles.td(false)}>#{order.id}</td>
+                    <td style={styles.td(false)}>{new Date(order.createdAt).toLocaleDateString()}</td>
+                    <td style={styles.td(false)}>{statusBadge(order.status)}</td>
+                    <td style={styles.td(false)}>{order.lines?.length ?? 0}</td>
+                    <td style={styles.td(false)} onClick={e => e.stopPropagation()}>
+                      {order.status !== 'RECEIVED'
+                        ? <button style={styles.btn('primary')} onClick={() => setReceiptDialog(order)}>📦 Book Goods Receipt</button>
+                        : <span style={{ color: '#2b8a3e', fontSize: 13 }}>✓ Received{order.receivedAt ? ` on ${new Date(order.receivedAt).toLocaleDateString()}` : ''}</span>
+                      }
+                    </td>
+                  </tr>
+                  {expanded && (
+                    <tr>
+                      <td colSpan={6} style={{ padding: 0, background: '#f8f9ff' }}>
+                        <table style={{ ...styles.table, margin: '0 0 0 32px', width: 'calc(100% - 32px)' }}>
+                          <thead>
+                            <tr>
+                              <th style={{ ...styles.th, background: '#eef0fb' }}>Item</th>
+                              <th style={{ ...styles.th, background: '#eef0fb' }}>SKU</th>
+                              <th style={{ ...styles.th, background: '#eef0fb' }}>Ordered</th>
+                              <th style={{ ...styles.th, background: '#eef0fb' }}>Received</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {order.lines.map(l => {
+                              const cf = l.conversionFactor && l.conversionFactor > 1 ? l.conversionFactor : null
+                              return (
+                                <tr key={l.id}>
+                                  <td style={styles.td(false)}>{l.inventoryItemName}</td>
+                                  <td style={{ ...styles.td(false), color: '#888', fontSize: 13 }}>{l.supplierSku ?? '—'}</td>
+                                  <td style={styles.td(false)}>
+                                    {l.requestedQty} {l.inventoryItemUnit}
+                                    {cf && <span style={{ color: '#888', fontSize: 12 }}> ({Math.ceil(l.requestedQty / cf)} {l.packageUnit})</span>}
+                                  </td>
+                                  <td style={styles.td(false)}>
+                                    {l.receivedQty != null
+                                      ? <>{l.receivedQty} {l.inventoryItemUnit}{cf && <span style={{ color: '#888', fontSize: 12 }}> ({(l.receivedQty / cf).toFixed(1)} {l.packageUnit})</span>}</>
+                                      : <span style={{ color: '#aaa' }}>—</span>}
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      {receiptDialog && (
+        <GoodsReceiptDialog
+          order={receiptDialog}
+          onClose={() => setReceiptDialog(null)}
+          onBooked={(updated) => {
+            setOrders(prev => prev.map(o => o.id === updated.id ? updated : o))
+            setReceiptDialog(null)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ─── Inventory sub-tabs: Items ────────────────────────────────────────────────
+function EditInventoryItemModal({ item, onClose, onSaved }) {
+  const [name, setName] = useState(item.name)
+  const [unit, setUnit] = useState(item.unit || '')
+  const [minStockLevel, setMinStockLevel] = useState(String(item.minStockLevel ?? ''))
+  const [reorderTarget, setReorderTarget] = useState(String(item.reorderTarget ?? ''))
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState(null)
+
+  const save = async () => {
+    setSaving(true)
+    setErr(null)
+    try {
+      const updated = await api.updateInventoryItem(item.id, {
+        name, unit,
+        minStockLevel: parseFloat(minStockLevel) || 0,
+        reorderTarget: parseFloat(reorderTarget) || 0,
+      })
+      onSaved(updated)
+    } catch (e) {
+      setErr(e.message)
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={styles.overlay}>
+      <div style={styles.modal}>
+        <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 16 }}>Edit Item</h3>
+        {err && <div style={styles.alert('error')}>{err}</div>}
+        <div style={styles.formRow}>
+          <label style={styles.label}>Name</label>
+          <input style={styles.input} value={name} onChange={e => setName(e.target.value)} />
+        </div>
+        <div style={styles.formRow}>
+          <label style={styles.label}>Unit</label>
+          <input style={styles.input} value={unit} onChange={e => setUnit(e.target.value)} />
+        </div>
+        <div style={styles.formRow}>
+          <label style={styles.label}>Min Stock Level</label>
+          <input type="number" style={styles.input} value={minStockLevel} onChange={e => setMinStockLevel(e.target.value)} />
+        </div>
+        <div style={styles.formRow}>
+          <label style={styles.label}>Reorder Target</label>
+          <input type="number" style={styles.input} value={reorderTarget} onChange={e => setReorderTarget(e.target.value)} />
+        </div>
+        <div style={{ marginTop: 20, display: 'flex', gap: 8 }}>
+          <button style={styles.btn('primary')} onClick={save} disabled={saving}>
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+          <button style={styles.btn('secondary')} onClick={onClose} disabled={saving}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function InventoryItemsSubTab() {
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [editModal, setEditModal] = useState(null)
+
+  useEffect(() => {
+    api.getInventory()
+      .then(setItems)
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return <div>Loading items...</div>
+
+  return (
+    <div>
+      <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Inventory Items</h2>
+      <div style={styles.card}>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={styles.th}>Name</th>
+              <th style={styles.th}>Unit</th>
+              <th style={styles.th}>Min Stock</th>
+              <th style={styles.th}>Reorder Target</th>
+              <th style={styles.th}>Current Stock</th>
+              <th style={styles.th}>Supplier</th>
+              <th style={styles.th}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map(item => (
+              <tr key={item.id}>
+                <td style={styles.td(false)}>{item.name}</td>
+                <td style={styles.td(false)}>{item.unit}</td>
+                <td style={styles.td(false)}>{item.minStockLevel?.toFixed(2)}</td>
+                <td style={styles.td(false)}>{item.reorderTarget?.toFixed(2)}</td>
+                <td style={styles.td(false)}>{item.cachedStock?.toFixed(2)}</td>
+                <td style={styles.td(false)}>
+                  {item.hasPreferredOffer
+                    ? <span style={{ color: '#2b8a3e', fontWeight: 600 }}>✓ linked</span>
+                    : <span style={{ color: '#e67700', fontWeight: 600 }}>⚠️ no supplier</span>}
+                </td>
+                <td style={styles.td(false)}>
+                  <button style={styles.btn('secondary')} onClick={() => setEditModal(item)}>Edit</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {editModal && (
+        <EditInventoryItemModal
+          item={editModal}
+          onClose={() => setEditModal(null)}
+          onSaved={(updated) => {
+            setItems(prev => prev.map(i => i.id === updated.id ? updated : i))
+            setEditModal(null)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ─── InventoryTab wrapper ─────────────────────────────────────────────────────
+function InventoryTab() {
+  const [subTab, setSubTab] = useState('order')
+  return (
+    <div>
+      <div style={styles.subTabs}>
+        <button style={styles.tab(subTab === 'order')}   onClick={() => setSubTab('order')}>Order</button>
+        <button style={styles.tab(subTab === 'history')} onClick={() => setSubTab('history')}>History</button>
+        <button style={styles.tab(subTab === 'items')}   onClick={() => setSubTab('items')}>Items</button>
+      </div>
+      {subTab === 'order'   && <OrderTab />}
+      {subTab === 'history' && <OrderHistorySubTab />}
+      {subTab === 'items'   && <InventoryItemsSubTab />}
     </div>
   )
 }
@@ -658,6 +1021,9 @@ function SmtpSettingsTab() {
           </>
         )}
       </div>
+
+      <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16, marginTop: 32 }}>POS Connector (ready2order)</h2>
+      <PosConnectorSettings />
     </div>
   )
 }
@@ -734,12 +1100,19 @@ function OfferModal({ offer, supplierId, onClose, onSaved }) {
 }
 
 // --- LinkDialog ---
-function LinkDialog({ offer, inventoryItems, onClose, onLinked }) {
+function LinkDialog({ offer, inventoryItems, onClose, onLinked, onItemCreated }) {
   const [filter, setFilter] = useState('')
   const [selectedItem, setSelectedItem] = useState(null)
   const [isPreferred, setIsPreferred] = useState(false)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
+  const [showCreateForm, setShowCreateForm] = useState(false)
+  const [newName, setNewName]               = useState('')
+  const [newUnit, setNewUnit]               = useState('')
+  const [newMinStock, setNewMinStock]       = useState(0)
+  const [newReorderTarget, setNewReorderTarget] = useState(0)
+  const [creating, setCreating]             = useState(false)
+  const [createErr, setCreateErr]           = useState(null)
 
   const filtered = inventoryItems.filter(it =>
     it.name.toLowerCase().includes(filter.toLowerCase())
@@ -763,6 +1136,36 @@ function LinkDialog({ offer, inventoryItems, onClose, onLinked }) {
     }
   }
 
+  const handleShowCreate = () => {
+    setNewName(offer.supplierProductName || '')
+    setNewUnit('')
+    setNewMinStock(0)
+    setNewReorderTarget(0)
+    setCreateErr(null)
+    setShowCreateForm(true)
+  }
+
+  const handleCreateAndSelect = async () => {
+    if (!newUnit.trim()) { setCreateErr('Canonical unit is required'); return }
+    setCreating(true)
+    setCreateErr(null)
+    try {
+      const created = await api.createInventoryItem({
+        name: newName,
+        unit: newUnit,
+        minStockLevel: newMinStock || 0,
+        reorderTarget: newReorderTarget || 0,
+      })
+      onItemCreated(created)
+      setSelectedItem(created)
+      setShowCreateForm(false)
+    } catch (e) {
+      setCreateErr(e.message)
+    } finally {
+      setCreating(false)
+    }
+  }
+
   return (
     <div style={styles.overlay}>
       <div style={{ ...styles.modal, width: 520 }}>
@@ -783,6 +1186,34 @@ function LinkDialog({ offer, inventoryItems, onClose, onLinked }) {
             </div>
           ))}
         </div>
+        {/* Create new item */}
+        {!showCreateForm && (
+          <button style={{ ...styles.btn('secondary'), marginBottom: 12, fontSize: 13 }}
+            onClick={handleShowCreate}>
+            ＋ Create new item
+          </button>
+        )}
+        {showCreateForm && (
+          <div style={{ border: '1px solid #d0e4ff', borderRadius: 6, padding: 12, marginBottom: 12, background: '#f8faff' }}>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>New inventory item</div>
+            {createErr && <div style={styles.alert('error')}>{createErr}</div>}
+            <input style={{ ...styles.input, marginBottom: 6 }} placeholder="Name *"
+              value={newName} onChange={e => setNewName(e.target.value)} />
+            <input style={{ ...styles.input, marginBottom: 6 }} placeholder="Canonical unit *"
+              value={newUnit} onChange={e => setNewUnit(e.target.value)} />
+            <input type="number" style={{ ...styles.input, marginBottom: 6 }} placeholder="Min stock level (default 0)"
+              value={newMinStock} onChange={e => setNewMinStock(e.target.value)} />
+            <input type="number" style={{ ...styles.input, marginBottom: 8 }} placeholder="Reorder target (default 0)"
+              value={newReorderTarget} onChange={e => setNewReorderTarget(e.target.value)} />
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button style={styles.btn('primary')} onClick={handleCreateAndSelect} disabled={creating}>
+                {creating ? 'Creating...' : 'Create & Select'}
+              </button>
+              <span style={{ fontSize: 13, color: '#888', cursor: 'pointer' }}
+                onClick={() => setShowCreateForm(false)}>Cancel</span>
+            </div>
+          </div>
+        )}
         {selectedItem && (
           <div style={{ fontSize: 13, color: '#555', marginBottom: 10 }}>
             Preview: 1 {offer.packageUnit || 'package'} = {offer.conversionFactor} × {selectedItem.unit}
@@ -869,25 +1300,19 @@ function AddComponentModal({ salesProduct, inventoryItems, onClose, onAdded }) {
 }
 
 function SupplierCatalogTab() {
-  const [subTab, setSubTab] = useState('offers')
   const [suppliers, setSuppliers] = useState([])
   const [selectedSupplierId, setSelectedSupplierId] = useState('')
   const [offers, setOffers] = useState([])
   const [inventoryItems, setInventoryItems] = useState([])
-  const [salesProducts, setSalesProducts] = useState([])
-  const [selectedProduct, setSelectedProduct] = useState(null)
-  const [components, setComponents] = useState([])
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState(null)
   const [offerModal, setOfferModal] = useState(null) // null | { offer? }
   const [linkDialog, setLinkDialog] = useState(null) // null | offer
-  const [addComponentModal, setAddComponentModal] = useState(false)
   const fileInputRef = React.useRef(null)
 
   useEffect(() => {
     api.getSuppliers().then(setSuppliers).catch(() => {})
     api.getInventory().then(setInventoryItems).catch(() => {})
-    api.getSalesProducts().then(setSalesProducts).catch(() => {})
   }, [])
 
   const loadOffers = useCallback(async (supplierId) => {
@@ -903,18 +1328,7 @@ function SupplierCatalogTab() {
     }
   }, [])
 
-  const loadComponents = useCallback(async (sp) => {
-    if (!sp) return
-    try {
-      const data = await api.getSalesProductComponents(sp.id)
-      setComponents(data)
-    } catch (e) {
-      setMessage({ type: 'error', text: 'Failed to load components: ' + e.message })
-    }
-  }, [])
-
   useEffect(() => { loadOffers(selectedSupplierId) }, [selectedSupplierId, loadOffers])
-  useEffect(() => { loadComponents(selectedProduct) }, [selectedProduct, loadComponents])
 
   const handleSupplierChange = (e) => {
     setSelectedSupplierId(e.target.value)
@@ -945,25 +1359,10 @@ function SupplierCatalogTab() {
     }
   }
 
-  const handleDeleteComponent = async (id) => {
-    if (!window.confirm('Remove this ingredient?')) return
-    try {
-      await api.deleteItemComponent(id)
-      setComponents(prev => prev.filter(c => c.id !== id))
-    } catch (e) {
-      setMessage({ type: 'error', text: 'Delete failed: ' + e.message })
-    }
-  }
-
   return (
     <div>
       {message && <div style={styles.alert(message.type)}>{message.text}</div>}
-      <div style={styles.subTabs}>
-        <button style={styles.tab(subTab === 'offers')} onClick={() => setSubTab('offers')}>Offers</button>
-        <button style={styles.tab(subTab === 'pos')} onClick={() => setSubTab('pos')}>POS Mappings</button>
-      </div>
-
-      {subTab === 'offers' && (
+      {(
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
             <select style={{ ...styles.input, width: 240 }} value={selectedSupplierId} onChange={handleSupplierChange}>
@@ -1026,63 +1425,6 @@ function SupplierCatalogTab() {
         </div>
       )}
 
-      {subTab === 'pos' && (
-        <div style={styles.twoCol}>
-          <div style={styles.leftPanel}>
-            <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>Sales Products</h3>
-            <div style={styles.card}>
-              {salesProducts.map(sp => (
-                <div key={sp.id} style={styles.listItem(selectedProduct?.id === sp.id)}
-                  onClick={() => setSelectedProduct(sp)}>
-                  {sp.name}
-                </div>
-              ))}
-              {salesProducts.length === 0 && <div style={{ color: '#aaa', fontSize: 13 }}>No sales products</div>}
-            </div>
-          </div>
-          <div style={styles.rightPanel}>
-            {selectedProduct ? (
-              <>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                  <h3 style={{ fontSize: 15, fontWeight: 600 }}>Ingredients for: {selectedProduct.name}</h3>
-                  <button style={styles.btn('primary')} onClick={() => setAddComponentModal(true)}>+ Add Ingredient</button>
-                </div>
-                <p style={{ fontSize: 12, color: '#888', marginBottom: 12 }}>Quantities always in the canonical unit of the inventory item</p>
-                <div style={styles.card}>
-                  <table style={styles.table}>
-                    <thead>
-                      <tr>
-                        <th style={styles.th}>Inventory Item</th>
-                        <th style={styles.th}>Qty</th>
-                        <th style={styles.th}>Unit</th>
-                        <th style={styles.th}></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {components.map(c => (
-                        <tr key={c.id}>
-                          <td style={styles.td(false)}>{c.inventoryItemName}</td>
-                          <td style={styles.td(false)}>{c.qtyRequired}</td>
-                          <td style={styles.td(false)}>{c.inventoryItemUnit}</td>
-                          <td style={styles.td(false)}>
-                            <button style={styles.btn('danger')} onClick={() => handleDeleteComponent(c.id)}>Delete</button>
-                          </td>
-                        </tr>
-                      ))}
-                      {components.length === 0 && (
-                        <tr><td colSpan={4} style={{ ...styles.td(false), color: '#aaa', textAlign: 'center' }}>No ingredients</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            ) : (
-              <div style={{ color: '#aaa', marginTop: 40, textAlign: 'center' }}>Select a sales product to view its ingredients</div>
-            )}
-          </div>
-        </div>
-      )}
-
       {offerModal !== null && (
         <OfferModal
           offer={offerModal.offer}
@@ -1102,9 +1444,223 @@ function SupplierCatalogTab() {
             loadOffers(selectedSupplierId)
             if (warning) setMessage({ type: 'error', text: warning })
           }}
+          onItemCreated={(newItem) => setInventoryItems(prev => [...prev, newItem])}
         />
       )}
+    </div>
+  )
+}
 
+// ─── Add Sales Product Modal ──────────────────────────────────────────────────
+function AddSalesProductModal({ onClose, onAdded }) {
+  const [name, setName] = useState('')
+  const [externalId, setExternalId] = useState('')
+  const [posSystem, setPosSystem] = useState('MANUAL')
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState(null)
+
+  const handleSave = async () => {
+    if (!name.trim() || !externalId.trim()) { setErr('Name and External ID are required'); return }
+    setSaving(true)
+    try {
+      const sp = await api.createSalesProduct({ name: name.trim(), externalId: externalId.trim(), posSystem })
+      onAdded(sp)
+    } catch (e) {
+      setErr(e.message)
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={styles.overlay}>
+      <div style={styles.modal}>
+        <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 18 }}>Add Sales Product</h3>
+        {err && <div style={styles.alert('error')}>{err}</div>}
+        <div style={styles.formRow}>
+          <label style={styles.label}>Name</label>
+          <input style={styles.input} value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Cola 0.33L" />
+        </div>
+        <div style={styles.formRow}>
+          <label style={styles.label}>External ID</label>
+          <input style={styles.input} value={externalId} onChange={e => setExternalId(e.target.value)} placeholder="e.g. 45053813" />
+        </div>
+        <div style={styles.formRow}>
+          <label style={styles.label}>POS System</label>
+          <select style={styles.input} value={posSystem} onChange={e => setPosSystem(e.target.value)}>
+            <option value="MANUAL">MANUAL</option>
+            <option value="READY2ORDER">READY2ORDER</option>
+          </select>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={styles.btn('primary')} onClick={handleSave} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
+          <button style={styles.btn('secondary')} onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── POS tab ─────────────────────────────────────────────────────────────────
+function PosMappingsTab() {
+  const [salesProducts, setSalesProducts] = useState([])
+  const [selectedProduct, setSelectedProduct] = useState(null)
+  const [components, setComponents] = useState([])
+  const [inventoryItems, setInventoryItems] = useState([])
+  const [addComponentModal, setAddComponentModal] = useState(false)
+  const [addProductModal, setAddProductModal] = useState(false)
+  const [message, setMessage] = useState(null)
+  const [importing, setImporting] = useState(false)
+  const csvInputRef = React.useRef(null)
+
+  const loadProducts = useCallback(() => {
+    api.getSalesProducts().then(setSalesProducts).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    loadProducts()
+    api.getInventory().then(setInventoryItems).catch(() => {})
+  }, [loadProducts])
+
+  const loadComponents = useCallback(async (sp) => {
+    if (!sp) return
+    try {
+      const data = await api.getSalesProductComponents(sp.id)
+      setComponents(data)
+    } catch (e) {
+      setMessage({ type: 'error', text: 'Failed to load components: ' + e.message })
+    }
+  }, [])
+
+  useEffect(() => { loadComponents(selectedProduct) }, [selectedProduct, loadComponents])
+
+  const handleDeleteComponent = async (id) => {
+    if (!window.confirm('Remove this ingredient?')) return
+    try {
+      await api.deleteItemComponent(id)
+      setComponents(prev => prev.filter(c => c.id !== id))
+    } catch (e) {
+      setMessage({ type: 'error', text: 'Delete failed: ' + e.message })
+    }
+  }
+
+  const handleDeleteProduct = async (e, sp) => {
+    e.stopPropagation()
+    if (!window.confirm(`Delete "${sp.name}"?`)) return
+    try {
+      await api.deleteSalesProduct(sp.id)
+      setSalesProducts(prev => prev.filter(p => p.id !== sp.id))
+      if (selectedProduct?.id === sp.id) { setSelectedProduct(null); setComponents([]) }
+    } catch (e) {
+      setMessage({ type: 'error', text: 'Delete failed: ' + e.message })
+    }
+  }
+
+  const handleImportR2O = async () => {
+    setImporting(true)
+    setMessage(null)
+    try {
+      const result = await api.importSalesProductsR2O()
+      setMessage({ type: 'success', text: `Imported ${result.imported} new, updated ${result.updated} products from ready2order` })
+      loadProducts()
+    } catch (e) {
+      setMessage({ type: 'error', text: 'Import failed: ' + e.message })
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  const handleImportCsv = async (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    e.target.value = ''
+    setMessage(null)
+    try {
+      const result = await api.importSalesProductsCsv(file)
+      setMessage({ type: 'success', text: `CSV: ${result.imported} imported, ${result.updated} updated, ${result.skipped} skipped` })
+      loadProducts()
+    } catch (e) {
+      setMessage({ type: 'error', text: 'CSV import failed: ' + e.message })
+    }
+  }
+
+  return (
+    <div>
+      {message && <div style={styles.alert(message.type)}>{message.text}</div>}
+      <div style={styles.twoCol}>
+        <div style={styles.leftPanel}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 600, margin: 0 }}>Sales Products</h3>
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+            <button style={styles.btn('secondary')} onClick={handleImportR2O} disabled={importing}>
+              {importing ? 'Importing...' : '↓ From ready2order'}
+            </button>
+            <input ref={csvInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleImportCsv} />
+            <button style={styles.btn('secondary')} onClick={() => csvInputRef.current?.click()}>
+              ↑ Import CSV
+            </button>
+            <button style={styles.btn('primary')} onClick={() => setAddProductModal(true)}>+ Add</button>
+          </div>
+          <div style={{ fontSize: 11, color: '#aaa', marginBottom: 8 }}>
+            CSV format: <code>name,externalId,posSystem</code>
+          </div>
+          <div style={styles.card}>
+            {salesProducts.map(sp => (
+              <div key={sp.id} style={{ ...styles.listItem(selectedProduct?.id === sp.id), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+                onClick={() => setSelectedProduct(sp)}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {sp.name}
+                  <span style={{ fontSize: 11, color: '#aaa', marginLeft: 6 }}>{sp.posSystem}</span>
+                </span>
+                <button
+                  style={{ ...styles.btn('danger'), padding: '2px 8px', fontSize: 12, marginLeft: 6, flexShrink: 0 }}
+                  onClick={(e) => handleDeleteProduct(e, sp)}>✕</button>
+              </div>
+            ))}
+            {salesProducts.length === 0 && <div style={{ color: '#aaa', fontSize: 13 }}>No sales products</div>}
+          </div>
+        </div>
+        <div style={styles.rightPanel}>
+          {selectedProduct ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <h3 style={{ fontSize: 15, fontWeight: 600 }}>Ingredients for: {selectedProduct.name}</h3>
+                <button style={styles.btn('primary')} onClick={() => setAddComponentModal(true)}>+ Add Ingredient</button>
+              </div>
+              <p style={{ fontSize: 12, color: '#888', marginBottom: 12 }}>Quantities always in the canonical unit of the inventory item</p>
+              <div style={styles.card}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={styles.th}>Inventory Item</th>
+                      <th style={styles.th}>Qty</th>
+                      <th style={styles.th}>Unit</th>
+                      <th style={styles.th}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {components.map(c => (
+                      <tr key={c.id}>
+                        <td style={styles.td(false)}>{c.inventoryItemName}</td>
+                        <td style={styles.td(false)}>{c.qtyRequired}</td>
+                        <td style={styles.td(false)}>{c.inventoryItemUnit}</td>
+                        <td style={styles.td(false)}>
+                          <button style={styles.btn('danger')} onClick={() => handleDeleteComponent(c.id)}>Delete</button>
+                        </td>
+                      </tr>
+                    ))}
+                    {components.length === 0 && (
+                      <tr><td colSpan={4} style={{ ...styles.td(false), color: '#aaa', textAlign: 'center' }}>No ingredients</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : (
+            <div style={{ color: '#aaa', marginTop: 40, textAlign: 'center' }}>Select a sales product to view its ingredients</div>
+          )}
+        </div>
+      </div>
       {addComponentModal && selectedProduct && (
         <AddComponentModal
           salesProduct={selectedProduct}
@@ -1113,20 +1669,139 @@ function SupplierCatalogTab() {
           onAdded={() => { setAddComponentModal(false); loadComponents(selectedProduct) }}
         />
       )}
+      {addProductModal && (
+        <AddSalesProductModal
+          onClose={() => setAddProductModal(false)}
+          onAdded={(sp) => { setSalesProducts(prev => [...prev, sp]); setAddProductModal(false) }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ─── POS Transaction History ──────────────────────────────────────────────────
+function PosTransactionHistoryTab() {
+  const [transactions, setTransactions] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [typeFilter, setTypeFilter] = useState('POS_SALE')
+
+  const load = useCallback((type) => {
+    setLoading(true)
+    api.getTransactions(type)
+      .then(setTransactions)
+      .catch(() => setTransactions([]))
+      .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => { load(typeFilter) }, [typeFilter, load])
+
+  const typeColor = (type) => ({
+    POS_SALE:      { background: '#fff0f6', color: '#c2255c' },
+    GOODS_RECEIPT: { background: '#ebfbee', color: '#2b8a3e' },
+    ADJUSTMENT:    { background: '#fff9db', color: '#7c5c00' },
+  }[type] || { background: '#f1f3f5', color: '#333' })
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+        <select
+          style={{ ...styles.input, width: 180 }}
+          value={typeFilter}
+          onChange={e => setTypeFilter(e.target.value)}
+        >
+          <option value="">All types</option>
+          <option value="POS_SALE">POS Sale</option>
+          <option value="GOODS_RECEIPT">Goods Receipt</option>
+          <option value="ADJUSTMENT">Adjustment</option>
+        </select>
+        <button style={styles.btn('secondary')} onClick={() => load(typeFilter)}>↻ Refresh</button>
+        <span style={{ fontSize: 13, color: '#888' }}>{transactions.length} entries</span>
+      </div>
+
+      {loading ? <div style={{ color: '#888' }}>Loading...</div> : (
+        <div style={styles.card}>
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <th style={styles.th}>Date & Time</th>
+                <th style={styles.th}>Type</th>
+                <th style={styles.th}>Inventory Item</th>
+                <th style={styles.th}>Delta</th>
+                <th style={styles.th}>Unit</th>
+                <th style={styles.th}>Reference / Invoice</th>
+              </tr>
+            </thead>
+            <tbody>
+              {transactions.map(tx => (
+                <tr key={tx.id}>
+                  <td style={styles.td(false)}>{tx.createdAt ? tx.createdAt.replace('T', ' ').substring(0, 19) : '—'}</td>
+                  <td style={styles.td(false)}>
+                    <span style={{ ...typeColor(tx.type), padding: '2px 8px', borderRadius: 10, fontSize: 12, fontWeight: 600 }}>
+                      {tx.type}
+                    </span>
+                  </td>
+                  <td style={styles.td(false)}>{tx.inventoryItem}</td>
+                  <td style={{ ...styles.td(false), fontWeight: 600, color: tx.delta < 0 ? '#c92a2a' : '#2b8a3e' }}>
+                    {tx.delta > 0 ? '+' : ''}{tx.delta}
+                  </td>
+                  <td style={styles.td(false)}>{tx.unit}</td>
+                  <td style={{ ...styles.td(false), fontSize: 12, color: '#888' }}>{tx.referenceId || '—'}</td>
+                </tr>
+              ))}
+              {transactions.length === 0 && (
+                <tr><td colSpan={6} style={{ ...styles.td(false), color: '#aaa', textAlign: 'center' }}>No transactions</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PosTab() {
+  const [subTab, setSubTab] = useState('pos-mappings')
+  return (
+    <div>
+      <div style={styles.subTabs}>
+        <button style={styles.tab(subTab === 'pos-mappings')} onClick={() => setSubTab('pos-mappings')}>POS Mappings</button>
+        <button style={styles.tab(subTab === 'tx-history')}   onClick={() => setSubTab('tx-history')}>Transaction History</button>
+      </div>
+      {subTab === 'pos-mappings' && <PosMappingsTab />}
+      {subTab === 'tx-history'   && <PosTransactionHistoryTab />}
+    </div>
+  )
+}
+
+// ─── SuppliersTab wrapper ─────────────────────────────────────────────────────
+function SuppliersTab() {
+  const [subTab, setSubTab] = useState('catalog')
+  return (
+    <div>
+      <div style={styles.subTabs}>
+        <button style={styles.tab(subTab === 'catalog')}       onClick={() => setSubTab('catalog')}>Catalog</button>
+        <button style={styles.tab(subTab === 'configuration')} onClick={() => setSubTab('configuration')}>Configuration</button>
+      </div>
+      {subTab === 'catalog'       && <SupplierCatalogTab />}
+      {subTab === 'configuration' && <SupplierConfigTab />}
     </div>
   )
 }
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 const TABS = [
-  { id: 'order', label: 'Order' },
-  { id: 'supplier', label: 'Supplier Configuration' },
-  { id: 'catalog', label: 'Supplier Catalog' },
-  { id: 'smtp', label: 'SMTP Settings' },
+  { id: 'order',     label: 'Inventory' },
+  { id: 'suppliers', label: 'Suppliers' },
+  { id: 'pos',       label: 'POS' },
+  { id: 'settings',  label: 'Settings' },
 ]
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('order')
+  const [activeTab, setActiveTab] = useState(() => {
+    const tab = new URLSearchParams(window.location.search).get('tab')
+    const validTabs = ['order', 'suppliers', 'pos', 'settings']
+    return validTabs.includes(tab) ? tab : 'order'
+  })
 
   return (
     <div style={styles.container}>
@@ -1142,10 +1817,10 @@ export default function App() {
           </button>
         ))}
       </div>
-      {activeTab === 'order' && <OrderTab />}
-      {activeTab === 'supplier' && <SupplierConfigTab />}
-      {activeTab === 'catalog' && <SupplierCatalogTab />}
-      {activeTab === 'smtp' && <SmtpSettingsTab />}
+      {activeTab === 'order'     && <InventoryTab />}
+      {activeTab === 'suppliers' && <SuppliersTab />}
+      {activeTab === 'pos'       && <PosTab />}
+      {activeTab === 'settings'  && <SmtpSettingsTab />}
     </div>
   )
 }

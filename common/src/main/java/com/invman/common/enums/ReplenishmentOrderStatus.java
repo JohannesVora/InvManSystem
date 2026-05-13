@@ -4,5 +4,6 @@ public enum ReplenishmentOrderStatus {
     DRAFT,
     SUBMITTED,
     CONFIRMED,
-    CANCELLED
+    CANCELLED,
+    RECEIVED
 }

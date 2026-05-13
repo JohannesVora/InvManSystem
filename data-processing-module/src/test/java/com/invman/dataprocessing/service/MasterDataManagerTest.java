@@ -12,6 +12,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
@@ -24,6 +25,7 @@ class MasterDataManagerTest {
     @Mock ConnectorConfigRepository connectorConfigRepository;
     @Mock ConnectorTypeRepository connectorTypeRepository;
     @Mock AlertEvaluator alertEvaluator;
+    @Mock SupplierProductOfferRepository offerRepository;
     @InjectMocks MasterDataManager masterDataManager;
 
     @Test
@@ -38,12 +40,14 @@ class MasterDataManagerTest {
 
         when(inventoryItemRepository.findAll()).thenReturn(List.of(item));
         when(alertEvaluator.needsReorder(item)).thenReturn(true);
+        when(offerRepository.findByInventoryItemIdAndIsPreferredTrue(1L)).thenReturn(Optional.empty());
 
         List<InventoryItemDto> result = masterDataManager.getAllInventoryItems();
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).name()).isEqualTo("Flour");
         assertThat(result.get(0).needsReorder()).isTrue();
+        assertThat(result.get(0).hasPreferredOffer()).isFalse();
     }
 
     @Test

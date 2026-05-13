@@ -35,6 +35,7 @@ export const api = {
   createSupplierOffer:       (data)       => request('POST', '/supplier-offers', data),
   updateSupplierOffer:       (id, data)   => request('PUT', `/supplier-offers/${id}`, data),
   deleteSupplierOffer:       (id)         => request('DELETE', `/supplier-offers/${id}`),
+  createInventoryItem:       (data)       => request('POST', '/inventory-items', data),
   linkSupplierOfferItem:     (id, data)   => request('PUT', `/supplier-offers/${id}/link-item`, data),
   importSupplierOffersExcel: async (supplierId, file) => {
     const form = new FormData()
@@ -50,9 +51,35 @@ export const api = {
     return res.json()
   },
 
+  getAllOrders:         ()         => request('GET',  '/orders/replenishment'),
+  bookGoodsReceipt:    (id, data) => request('POST', `/orders/replenishment/${id}/goods-receipt`, data),
+  updateInventoryItem: (id, data) => request('PUT',  `/inventory-items/${id}`, data),
+
   // POS mappings
   getSalesProducts:          ()           => request('GET', '/sales-products'),
   getSalesProductComponents: (spId)       => request('GET', `/sales-products/${spId}/components`),
   addItemComponent:          (itemId, data) => request('POST', `/inventory-items/${itemId}/components`, data),
   deleteItemComponent:       (id)         => request('DELETE', `/product-components/${id}`),
+  createSalesProduct:        (data)       => request('POST', '/sales-products', data),
+  deleteSalesProduct:        (id)         => request('DELETE', `/sales-products/${id}`),
+  importSalesProductsR2O:    ()           => request('POST', '/sales-products/import-r2o'),
+  importSalesProductsCsv:    async (file) => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`${BASE_URL}/sales-products/import-csv`, { method: 'POST', body: form })
+    if (!res.ok) { const text = await res.text(); throw new Error(`${res.status}: ${text}`) }
+    return res.json()
+  },
+
+  // Transactions
+  getTransactions: (type, limit = 200) => request('GET', `/transactions${type ? `?type=${type}&limit=${limit}` : `?limit=${limit}`}`),
+
+  // ready2order / POS connector
+  getR2OSettings:            ()       => request('GET',  '/settings/r2o'),
+  updateR2OSettings:         (data)   => request('PUT',  '/settings/r2o', data),
+  requestR2OGrant:           (data)   => request('POST', '/settings/r2o/request-grant', data),
+  triggerR2OPoll:            ()       => request('POST', '/inbound/r2o/poll'),
+  getR2OWebhook:             ()       => request('GET',  '/settings/r2o/webhook'),
+  registerR2OWebhook:        (data)   => request('PUT',  '/settings/r2o/webhook', data),
+  unregisterR2OWebhook:      ()       => request('DELETE', '/settings/r2o/webhook'),
 }

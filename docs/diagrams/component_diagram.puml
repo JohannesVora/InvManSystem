@@ -1,0 +1,147 @@
+@startuml InvManSystem Component Diagram
+!theme cerulean
+left to right direction
+
+skinparam componentStyle rectangle
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontSize 12
+skinparam component {
+  BackgroundColor #D6E8FF
+  BorderColor #2C5FAA
+  FontSize 12
+}
+skinparam package {
+  BackgroundColor #F0F5FF
+  BorderColor #5580CC
+  FontStyle bold
+  FontSize 13
+}
+skinparam database {
+  BackgroundColor #E8F5E9
+  BorderColor #2E7D32
+}
+skinparam node {
+  BackgroundColor #FFF8E1
+  BorderColor #F9A825
+  FontSize 12
+}
+skinparam actor {
+  BackgroundColor #FCE4EC
+  BorderColor #C62828
+}
+
+' ─── External actors ──────────────────────────────────────────────────────────
+actor "User" as USER
+node "ready2order\n(POS)" as R2O
+node "SMTP Server" as SMTP
+node "WPPConnect\n(WhatsApp GW)" as WPP
+node "ngrok\n(tunnel)" as NGROK
+
+' ─── Persistence ──────────────────────────────────────────────────────────────
+database "PostgreSQL" as DB
+
+' ─── Frontend ─────────────────────────────────────────────────────────────────
+package "frontend  [:80  React + nginx]" {
+  [React SPA] as SPA
+}
+
+' ─── Backend ─────────────────────────────────────────────────────────────────
+package "app  [:8080  Spring Boot]" {
+
+  package "data-processing-module" {
+    package "REST Controllers" as CTRL {
+      [Inventory &\nMasterData API] as INVAPI
+      [Replenishment\nOrder API] as ORDAPI
+      [SalesProduct\n& Mapping API] as SPAPI
+      [Transaction\nHistory API] as TXAPI
+      [Inbound\nWebhook] as WAPI
+      [ready2order\nSettings & OAuth] as R2OAPI
+      [Supplier &\nCatalog API] as SUPAPI
+      [SMTP & WPP\nSettings API] as CFGAPI
+    }
+    package "Services" as SVC {
+      [MasterDataManager] as MDM
+      [ReplenishmentService] as RS
+      [StockCalculator] as SC
+      [AlertEvaluator] as AE
+      [SmtpSettingsService] as SSS
+      [WppConnectSettingsService] as WPPSS
+    }
+  }
+
+  package "inbound-connector-module" {
+    [InboundPollingScheduler] as IPS
+    [Ready2OrderPollingConnector] as R2OPC
+    [PosEventMapper] as PEM
+    [InboundOrchestrator] as IO
+  }
+
+  package "outbound-connector-module" {
+    [ConnectorOrchestrator] as CO
+    [EmailConnector] as EC
+    [WhatsAppConnector] as WAC
+  }
+
+  package "common  [Entities · Repositories · DTOs]" {
+    database "Repository Layer\n(JPA)" as REPO
+  }
+}
+
+' ─── User flow ────────────────────────────────────────────────────────────────
+USER  --> SPA
+
+SPA   --> INVAPI  : REST
+SPA   --> ORDAPI  : REST
+SPA   --> SPAPI   : REST
+SPA   --> TXAPI   : REST
+SPA   --> R2OAPI  : REST
+SPA   --> SUPAPI  : REST
+SPA   --> CFGAPI  : REST
+
+' ─── Controllers → Services / Repos ──────────────────────────────────────────
+INVAPI  --> MDM
+ORDAPI  --> RS
+ORDAPI  --> CO       : trigger outbound
+SPAPI   --> REPO
+TXAPI   --> REPO
+WAPI    --> PEM
+WAPI    --> IO
+R2OAPI  --> REPO
+SUPAPI  --> REPO
+CFGAPI  --> SSS
+CFGAPI  --> WPPSS
+
+MDM   --> REPO
+MDM   --> AE
+RS    --> REPO
+RS    --> SC
+SC    --> REPO
+SSS   --> REPO
+WPPSS --> REPO
+
+' ─── Inbound chain ───────────────────────────────────────────────────────────
+IPS  --> R2OPC  : poll every 60 s\n(mode=polling)
+R2OPC --> R2O  : GET /v1/invoices
+R2OPC --> PEM
+NGROK --> WAPI : forward POST webhook
+R2O  --> NGROK : push invoice.created\n(mode=webhook)
+PEM  --> IO
+IO   --> REPO  : save TX + recalc stock
+
+' ─── Outbound chain ───────────────────────────────────────────────────────────
+CO  --> EC
+CO  --> WAC
+EC  --> SMTP
+WAC --> WPP
+
+' ─── OAuth / Import ──────────────────────────────────────────────────────────
+R2OAPI --> R2O : OAuth grant\n& product import
+
+' ─── Settings external ───────────────────────────────────────────────────────
+SSS   --> SMTP : verify config
+WPPSS --> WPP  : token / QR
+
+' ─── Database ────────────────────────────────────────────────────────────────
+REPO --> DB
+
+@enduml

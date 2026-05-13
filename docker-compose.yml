@@ -71,6 +71,17 @@ services:
       - wppconnect-tokens:/usr/src/wpp-server/tokens
     restart: unless-stopped
 
+  ngrok:
+    image: ngrok/ngrok:latest
+    command: http frontend:80
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    ports:
+      - "4040:4040"
+    depends_on:
+      - frontend
+    restart: unless-stopped
+
   dbeaver:
     image: dbeaver/cloudbeaver:latest
     container_name: dbeaver

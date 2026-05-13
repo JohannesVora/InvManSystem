@@ -24,4 +24,7 @@ public class ReplenishmentOrderLine {
 
     @Column(name = "requested_qty", nullable = false)
     private Double requestedQty;
+
+    @Column(name = "received_qty")
+    private Double receivedQty;
 }

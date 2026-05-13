@@ -71,14 +71,16 @@ CREATE TABLE IF NOT EXISTS replenishment_orders (
     id           BIGSERIAL PRIMARY KEY,
     status       TEXT      NOT NULL DEFAULT 'DRAFT',
     created_at   TIMESTAMP DEFAULT NOW(),
-    submitted_at TIMESTAMP
+    submitted_at TIMESTAMP,
+    received_at  TIMESTAMP DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS replenishment_order_lines (
     id                     BIGSERIAL PRIMARY KEY,
     replenishment_order_id BIGINT NOT NULL REFERENCES replenishment_orders(id),
     inventory_item_id      BIGINT NOT NULL REFERENCES inventory_items(id),
-    requested_qty          DOUBLE PRECISION NOT NULL
+    requested_qty          DOUBLE PRECISION NOT NULL,
+    received_qty           DOUBLE PRECISION DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS connector_types (

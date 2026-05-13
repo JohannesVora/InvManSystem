@@ -28,6 +28,9 @@ public class ReplenishmentOrder {
     @Column(name = "submitted_at")
     private LocalDateTime submittedAt;
 
+    @Column(name = "received_at")
+    private LocalDateTime receivedAt;
+
     @OneToMany(mappedBy = "replenishmentOrder", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     private List<ReplenishmentOrderLine> lines;
 }
