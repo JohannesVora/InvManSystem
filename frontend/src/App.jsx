@@ -583,8 +583,8 @@ function InventoryTab() {
   return (
     <div>
       <div style={styles.subTabs}>
-        <button style={styles.tab(subTab === 'order')}   onClick={() => setSubTab('order')}>Order</button>
-        <button style={styles.tab(subTab === 'history')} onClick={() => setSubTab('history')}>History</button>
+        <button style={styles.tab(subTab === 'order')}   onClick={() => setSubTab('order')}>Inventory</button>
+        <button style={styles.tab(subTab === 'history')} onClick={() => setSubTab('history')}>Orders</button>
         <button style={styles.tab(subTab === 'items')}   onClick={() => setSubTab('items')}>Items</button>
       </div>
       {subTab === 'order'   && <OrderTab />}

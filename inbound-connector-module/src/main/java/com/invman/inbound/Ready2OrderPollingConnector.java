@@ -42,6 +42,11 @@ public class Ready2OrderPollingConnector implements InboundConnector {
     }
 
     @Override
+    public String getType() {
+        return "READY2ORDER_POLLING";
+    }
+
+    @Override
     public List<PosInvoicePayload> fetchInvoices(String configJson) {
         try {
             JsonNode config = objectMapper.readTree(configJson);

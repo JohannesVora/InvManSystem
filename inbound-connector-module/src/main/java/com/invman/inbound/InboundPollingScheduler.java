@@ -14,7 +14,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class InboundPollingScheduler {
 
-    private final Ready2OrderPollingConnector ready2OrderPollingConnector;
+    private final InboundConnectorRegistry inboundConnectorRegistry;
     private final InboundOrchestrator inboundOrchestrator;
     private final AppSettingRepository appSettingRepository;
 
@@ -44,8 +44,16 @@ public class InboundPollingScheduler {
                 accountToken, posSource, lastPolledAt
         );
 
+        String connectorType = appSettingRepository.findByKey("r2o.connectorType")
+                .map(s -> s.getValue()).orElse("READY2ORDER_POLLING");
+        if (!inboundConnectorRegistry.hasConnector(connectorType)) {
+            log.warn("No inbound connector registered for type '{}', skipping poll", connectorType);
+            return;
+        }
+
         log.debug("Polling ready2order invoices...");
-        List<PosInvoicePayload> invoices = ready2OrderPollingConnector.fetchInvoices(configJson);
+        List<PosInvoicePayload> invoices =
+                inboundConnectorRegistry.getConnector(connectorType).fetchInvoices(configJson);
         if (invoices.isEmpty()) {
             log.debug("Polling ready2order: no new invoices");
         } else {
